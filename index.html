@@ -82,6 +82,12 @@
     const nameInput = document.getElementById('nameInput');
     const colorInput = document.getElementById('colorInput');
 
+    // Save/load nickname and color
+    window.addEventListener('load', () => {
+      nameInput.value = localStorage.getItem('playerName') || '';
+      colorInput.value = localStorage.getItem('playerColor') || '#4caf50';
+    });
+
     chatInput.addEventListener('focus', () => isTyping = true);
     chatInput.addEventListener('blur', () => isTyping = false);
 
@@ -97,11 +103,13 @@
     colorInput.addEventListener('change', sendNameAndColor);
 
     function sendNameAndColor() {
-      ws.send(JSON.stringify({
-        type: 'setName',
-        name: nameInput.value.trim().slice(0, 15),
-        color: colorInput.value
-      }));
+      const name = nameInput.value.trim().slice(0, 15);
+      const color = colorInput.value;
+      if (name.length > 0) {
+        ws.send(JSON.stringify({ type: 'setName', name, color }));
+        localStorage.setItem('playerName', name);
+        localStorage.setItem('playerColor', color);
+      }
     }
 
     window.addEventListener('keydown', (e) => {
@@ -131,9 +139,9 @@
     }
 
     function drawGrid(camX, camY) {
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 1;
-      const spacing = 200;
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1.2;
+      const spacing = 100;
       const startX = -camX % spacing;
       const startY = -camY % spacing;
 
@@ -150,6 +158,34 @@
         ctx.lineTo(width, y);
         ctx.stroke();
       }
+
+      // Center marker
+      const centerX = mapSize / 2 - camX;
+      const centerY = mapSize / 2 - camY;
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(centerX - 10, centerY);
+      ctx.lineTo(centerX + 10, centerY);
+      ctx.moveTo(centerX, centerY - 10);
+      ctx.lineTo(centerX, centerY + 10);
+      ctx.stroke();
+    }
+
+    function drawRoundedRect(ctx, x, y, w, h, r, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+      ctx.fill();
     }
 
     function drawPlayers() {
@@ -163,10 +199,7 @@
         const screenX = p.x - camX;
         const screenY = p.y - camY;
 
-        ctx.fillStyle = p.color || '#2196f3';
-        ctx.beginPath();
-        ctx.roundRect(screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius);
-        ctx.fill();
+        drawRoundedRect(ctx, screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius, p.color || '#2196f3');
 
         if (p.name) {
           ctx.fillStyle = 'white';
@@ -208,6 +241,14 @@
       if (data.type === 'players') {
         players = data.players;
       }
+    };
+
+    ws.onerror = (e) => {
+      console.error('WebSocket ошибка:', e);
+    };
+
+    ws.onclose = () => {
+      console.warn('WebSocket соединение закрыто');
     };
 
     gameLoop();
