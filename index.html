@@ -10,7 +10,12 @@
   <canvas id="gameCanvas"></canvas>
 
   <div id="chatContainer">
-    <input type="text" id="chatInput" placeholder="Написать сообщение и нажать Enter" autocomplete="off" />
+    <input
+      type="text"
+      id="chatInput"
+      placeholder="Написать сообщение и нажать Enter"
+      autocomplete="off"
+    />
   </div>
 
   <script>
@@ -28,7 +33,8 @@
     window.addEventListener('resize', resize);
     resize();
 
-    const ws = new WebSocket(`ws://${location.host}`);
+    // Подключаем WebSocket по защищённому протоколу WSS
+    const ws = new WebSocket(`wss://${location.host}`);
 
     let playerId = null;
     let players = {};
@@ -37,7 +43,7 @@
     const playerSize = 50;
     const cornerRadius = 15;
 
-    // Управление
+    // Управление клавиатурой
     let keys = {};
     window.addEventListener('keydown', (e) => {
       keys[e.key.toLowerCase()] = true;
@@ -46,33 +52,44 @@
       keys[e.key.toLowerCase()] = false;
     });
 
-    // Для телефона: простой виртуальный джойстик
+    // Сенсорное управление для телефона (виртуальный джойстик)
     let touchX = null;
     let touchY = null;
     let moveX = 0;
     let moveY = 0;
 
-    canvas.addEventListener('touchstart', (e) => {
-      const touch = e.touches[0];
-      touchX = touch.clientX;
-      touchY = touch.clientY;
-    });
-    canvas.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      const touch = e.touches[0];
-      moveX = touch.clientX - touchX;
-      moveY = touch.clientY - touchY;
-    }, { passive: false });
-    canvas.addEventListener('touchend', (e) => {
-      moveX = 0;
-      moveY = 0;
-      touchX = null;
-      touchY = null;
-    });
+    canvas.addEventListener(
+      'touchstart',
+      (e) => {
+        const touch = e.touches[0];
+        touchX = touch.clientX;
+        touchY = touch.clientY;
+      },
+      { passive: false }
+    );
+    canvas.addEventListener(
+      'touchmove',
+      (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        moveX = touch.clientX - touchX;
+        moveY = touch.clientY - touchY;
+      },
+      { passive: false }
+    );
+    canvas.addEventListener(
+      'touchend',
+      (e) => {
+        moveX = 0;
+        moveY = 0;
+        touchX = null;
+        touchY = null;
+      },
+      { passive: false }
+    );
 
     // Чат
     const chatInput = document.getElementById('chatInput');
-
     chatInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && chatInput.value.trim() !== '') {
         const msg = chatInput.value.trim();
@@ -81,7 +98,7 @@
       }
     });
 
-    // Рисуем круглый квадрат
+    // Функция для рисования закруглённого квадрата
     function roundRect(ctx, x, y, width, height, radius, fillStyle) {
       ctx.fillStyle = fillStyle;
       ctx.beginPath();
@@ -105,13 +122,13 @@
       let dx = 0;
       let dy = 0;
 
-      // ПК управление
+      // Управление с клавиатуры (ПК)
       if (keys['w'] || keys['arrowup']) dy -= speed;
       if (keys['s'] || keys['arrowdown']) dy += speed;
       if (keys['a'] || keys['arrowleft']) dx -= speed;
       if (keys['d'] || keys['arrowright']) dx += speed;
 
-      // Телефон управление (простое)
+      // Управление с телефона (джойстик)
       if (moveX !== 0 || moveY !== 0) {
         const len = Math.sqrt(moveX * moveX + moveY * moveY);
         if (len > 20) {
@@ -130,7 +147,8 @@
       updatePosition();
 
       const now = Date.now();
-      if (playerId && now - lastSendTime > 40) { // ~25fps отправка на сервер
+      if (playerId && now - lastSendTime > 40) {
+        // Отправляем позицию на сервер примерно 25 раз в секунду
         ws.send(JSON.stringify({ type: 'move', x: playerPos.x, y: playerPos.y }));
         lastSendTime = now;
       }
@@ -149,10 +167,18 @@
         const screenX = p.x - camX;
         const screenY = p.y - camY;
 
-        // Рисуем игрока (закругленный квадрат)
-        roundRect(ctx, screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius, id === playerId ? '#4caf50' : '#2196f3');
+        // Рисуем закруглённый квадрат игрока
+        roundRect(
+          ctx,
+          screenX - playerSize / 2,
+          screenY - playerSize / 2,
+          playerSize,
+          playerSize,
+          cornerRadius,
+          id === playerId ? '#4caf50' : '#2196f3'
+        );
 
-        // Рисуем сообщение над головой, если есть и не прошло 2.5 секунды
+        // Рисуем сообщение над головой, если оно есть и не прошло 2.5 секунды
         if (p.msg && Date.now() - p.msgTime < 2500) {
           ctx.font = '16px Arial';
           ctx.fillStyle = 'white';
@@ -172,6 +198,14 @@
       } else if (data.type === 'players') {
         players = data.players;
       }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.warn('WebSocket connection closed');
     };
 
     gameLoop();
