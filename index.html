@@ -1,257 +1,254 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Multiplayer Cube Game</title>
-  <style>
-    body, html {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: #111;
-      font-family: sans-serif;
-    }
-
-    #gameCanvas {
-      display: block;
-    }
-
-    #chatContainer {
-      position: fixed;
-      bottom: 10px;
-      left: 10px;
-      display: flex;
-      gap: 10px;
-      z-index: 10;
-    }
-
-    #chatInput, #nameInput, #colorInput {
-      padding: 8px;
-      font-size: 14px;
-      border: none;
-      border-radius: 4px;
-    }
-
-    #chatInput {
-      width: 250px;
-    }
-
-    #nameInput {
-      width: 120px;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multiplayer Cube Game</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; overflow: hidden;
+    background: #111;
+    font-family: sans-serif;
+  }
+  #gameCanvas {
+    display: block;
+  }
+  #chatContainer {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  #chatInput, #nameInput, #colorInput {
+    padding: 8px;
+    font-size: 14px;
+    border: none;
+    border-radius: 4px;
+  }
+  #chatInput {
+    width: 250px;
+  }
+  #nameInput {
+    width: 120px;
+  }
+</style>
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
+<canvas id="gameCanvas"></canvas>
+<div id="chatContainer">
+  <input type="text" id="chatInput" maxlength="50" placeholder="Сообщение (до 50 символов)" />
+  <input type="text" id="nameInput" placeholder="Ник" maxlength="15" />
+  <input type="color" id="colorInput" value="#4caf50" />
+</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let width, height;
 
-  <div id="chatContainer">
-    <input type="text" id="chatInput" maxlength="50" placeholder="Сообщение (до 50 символов)" />
-    <input type="text" id="nameInput" placeholder="Ник" maxlength="15" />
-    <input type="color" id="colorInput" value="#4caf50" />
-  </div>
+function resize() {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+}
+window.addEventListener('resize', resize);
+resize();
 
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    let width, height;
+const ws = new WebSocket(`wss://${location.host}`);
+let playerId = null;
+let players = {};
+let playerPos = { x: 10000, y: 10000 };
+const mapSize = 20000;
+const playerSize = 50;
+const cornerRadius = 10;
+let cam = { x: playerPos.x, y: playerPos.y };
+let keys = {};
+let lastSend = 0;
+let isTyping = false;
 
-    function resize() {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      canvas.width = width;
-      canvas.height = height;
+const chatInput = document.getElementById('chatInput');
+const nameInput = document.getElementById('nameInput');
+const colorInput = document.getElementById('colorInput');
+
+// Load nickname and color
+window.addEventListener('load', () => {
+  nameInput.value = localStorage.getItem('playerName') || '';
+  colorInput.value = localStorage.getItem('playerColor') || '#4caf50';
+  sendNameAndColor();
+});
+
+chatInput.addEventListener('focus', () => isTyping = true);
+chatInput.addEventListener('blur', () => isTyping = false);
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+    const msg = chatInput.value.trim().slice(0, 50);
+    ws.send(JSON.stringify({ type: 'chat', msg }));
+    chatInput.value = '';
+  }
+});
+
+nameInput.addEventListener('change', sendNameAndColor);
+colorInput.addEventListener('change', sendNameAndColor);
+
+function sendNameAndColor() {
+  const name = nameInput.value.trim().slice(0, 15);
+  const color = colorInput.value;
+  if (name.length > 0) {
+    ws.send(JSON.stringify({ type: 'setName', name, color }));
+    localStorage.setItem('playerName', name);
+    localStorage.setItem('playerColor', color);
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (!isTyping) keys[e.key.toLowerCase()] = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (!isTyping) keys[e.key.toLowerCase()] = false;
+});
+
+function updatePosition() {
+  if (isTyping) return; // не двигаться во время печати
+  const speed = 7;
+  let dx = 0, dy = 0;
+  if (keys['w']) dy -= speed;
+  if (keys['s']) dy += speed;
+  if (keys['a']) dx -= speed;
+  if (keys['d']) dx += speed;
+
+  playerPos.x = Math.min(Math.max(0, playerPos.x + dx), mapSize);
+  playerPos.y = Math.min(Math.max(0, playerPos.y + dy), mapSize);
+
+  const now = Date.now();
+  if (now - lastSend > 40 && playerId) {
+    ws.send(JSON.stringify({ type: 'move', x: playerPos.x, y: playerPos.y }));
+    lastSend = now;
+  }
+}
+
+function drawGrid(camX, camY) {
+  const spacing = 100;
+  const startX = -camX % spacing;
+  const startY = -camY % spacing;
+
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'; // полупрозрачные белые линии
+
+  for (let x = startX; x < width; x += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  for (let y = startY; y < height; y += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  // Центр карты (красный крест)
+  const centerX = mapSize / 2 - camX;
+  const centerY = mapSize / 2 - camY;
+  ctx.strokeStyle = 'red';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 10, centerY);
+  ctx.lineTo(centerX + 10, centerY);
+  ctx.moveTo(centerX, centerY - 10);
+  ctx.lineTo(centerX, centerY + 10);
+  ctx.stroke();
+}
+
+function drawRoundedRect(ctx, x, y, w, h, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawPlayers() {
+  const camX = cam.x - width / 2;
+  const camY = cam.y - height / 2;
+
+  drawGrid(camX, camY);
+
+  for (const id in players) {
+    const p = players[id];
+    const screenX = p.x - camX;
+    const screenY = p.y - camY;
+
+    drawRoundedRect(ctx, screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius, p.color || '#2196f3');
+
+    if (p.name) {
+      ctx.fillStyle = 'white';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.name, screenX, screenY - playerSize / 2 - 15);
     }
 
-    window.addEventListener('resize', resize);
-    resize();
-
-    const ws = new WebSocket(`wss://${location.host}`);
-    let playerId = null;
-    let players = {};
-    let playerPos = { x: 10000, y: 10000 };
-    const mapSize = 20000;
-    const playerSize = 50;
-    const cornerRadius = 10;
-    let cam = { x: playerPos.x, y: playerPos.y };
-    let keys = {};
-    let lastSend = 0;
-    let isTyping = false;
-
-    const chatInput = document.getElementById('chatInput');
-    const nameInput = document.getElementById('nameInput');
-    const colorInput = document.getElementById('colorInput');
-
-    // Save/load nickname and color
-    window.addEventListener('load', () => {
-      nameInput.value = localStorage.getItem('playerName') || '';
-      colorInput.value = localStorage.getItem('playerColor') || '#4caf50';
-    });
-
-    chatInput.addEventListener('focus', () => isTyping = true);
-    chatInput.addEventListener('blur', () => isTyping = false);
-
-    chatInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && chatInput.value.trim() !== '') {
-        const msg = chatInput.value.trim().slice(0, 50);
-        ws.send(JSON.stringify({ type: 'chat', msg }));
-        chatInput.value = '';
-      }
-    });
-
-    nameInput.addEventListener('change', sendNameAndColor);
-    colorInput.addEventListener('change', sendNameAndColor);
-
-    function sendNameAndColor() {
-      const name = nameInput.value.trim().slice(0, 15);
-      const color = colorInput.value;
-      if (name.length > 0) {
-        ws.send(JSON.stringify({ type: 'setName', name, color }));
-        localStorage.setItem('playerName', name);
-        localStorage.setItem('playerColor', color);
-      }
+    if (p.msg && Date.now() - p.msgTime < 2500) {
+      ctx.fillStyle = 'yellow';
+      ctx.font = '12px Arial';
+      ctx.fillText(p.msg, screenX, screenY - playerSize / 2 - 30);
     }
+  }
+}
 
-    window.addEventListener('keydown', (e) => {
-      if (!isTyping) keys[e.key.toLowerCase()] = true;
-    });
+function gameLoop() {
+  updatePosition();
+  cam.x += (playerPos.x - cam.x) * 0.1;
+  cam.y += (playerPos.y - cam.y) * 0.1;
 
-    window.addEventListener('keyup', (e) => {
-      if (!isTyping) keys[e.key.toLowerCase()] = false;
-    });
+  ctx.fillStyle = '#222';
+  ctx.fillRect(0, 0, width, height);
 
-    function updatePosition() {
-      const speed = 7;
-      let dx = 0, dy = 0;
-      if (keys['w']) dy -= speed;
-      if (keys['s']) dy += speed;
-      if (keys['a']) dx -= speed;
-      if (keys['d']) dx += speed;
+  drawPlayers();
+  requestAnimationFrame(gameLoop);
+}
 
-      playerPos.x = Math.min(Math.max(0, playerPos.x + dx), mapSize);
-      playerPos.y = Math.min(Math.max(0, playerPos.y + dy), mapSize);
-
-      const now = Date.now();
-      if (now - lastSend > 40 && playerId) {
-        ws.send(JSON.stringify({ type: 'move', x: playerPos.x, y: playerPos.y }));
-        lastSend = now;
-      }
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'init') {
+    playerId = data.id;
+    playerPos.x = data.x;
+    playerPos.y = data.y;
+    cam.x = playerPos.x;
+    cam.y = playerPos.y;
+    players = data.players;
+  }
+  if (data.type === 'players') {
+    players = data.players;
+  }
+  if (data.type === 'chat') {
+    if (players[data.id]) {
+      players[data.id].msg = data.msg;
+      players[data.id].msgTime = Date.now();
     }
+  }
+};
 
-    function drawGrid(camX, camY) {
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 1.2;
-      const spacing = 100;
-      const startX = -camX % spacing;
-      const startY = -camY % spacing;
+ws.onerror = (e) => {
+  console.error('WebSocket ошибка:', e);
+};
 
-      for (let x = startX; x < width; x += spacing) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
-      }
+ws.onclose = () => {
+  console.warn('WebSocket соединение закрыто');
+};
 
-      for (let y = startY; y < height; y += spacing) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-
-      // Center marker
-      const centerX = mapSize / 2 - camX;
-      const centerY = mapSize / 2 - camY;
-      ctx.strokeStyle = 'red';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(centerX - 10, centerY);
-      ctx.lineTo(centerX + 10, centerY);
-      ctx.moveTo(centerX, centerY - 10);
-      ctx.lineTo(centerX, centerY + 10);
-      ctx.stroke();
-    }
-
-    function drawRoundedRect(ctx, x, y, w, h, r, color) {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + w - r, y);
-      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-      ctx.lineTo(x + w, y + h - r);
-      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-      ctx.lineTo(x + r, y + h);
-      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-      ctx.lineTo(x, y + r);
-      ctx.quadraticCurveTo(x, y, x + r, y);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    function drawPlayers() {
-      const camX = cam.x - width / 2;
-      const camY = cam.y - height / 2;
-
-      drawGrid(camX, camY);
-
-      for (const id in players) {
-        const p = players[id];
-        const screenX = p.x - camX;
-        const screenY = p.y - camY;
-
-        drawRoundedRect(ctx, screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius, p.color || '#2196f3');
-
-        if (p.name) {
-          ctx.fillStyle = 'white';
-          ctx.font = '14px Arial';
-          ctx.textAlign = 'center';
-          ctx.fillText(p.name, screenX, screenY - playerSize / 2 - 15);
-        }
-
-        if (p.msg && Date.now() - p.msgTime < 2500) {
-          ctx.fillStyle = 'yellow';
-          ctx.font = '12px Arial';
-          ctx.fillText(p.msg, screenX, screenY - playerSize / 2 - 30);
-        }
-      }
-    }
-
-    function gameLoop() {
-      updatePosition();
-      cam.x += (playerPos.x - cam.x) * 0.1;
-      cam.y += (playerPos.y - cam.y) * 0.1;
-
-      ctx.fillStyle = '#222';
-      ctx.fillRect(0, 0, width, height);
-
-      drawPlayers();
-      requestAnimationFrame(gameLoop);
-    }
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'init') {
-        playerId = data.id;
-        playerPos.x = data.x;
-        playerPos.y = data.y;
-        cam.x = playerPos.x;
-        cam.y = playerPos.y;
-        players = data.players;
-      }
-      if (data.type === 'players') {
-        players = data.players;
-      }
-    };
-
-    ws.onerror = (e) => {
-      console.error('WebSocket ошибка:', e);
-    };
-
-    ws.onclose = () => {
-      console.warn('WebSocket соединение закрыто');
-    };
-
-    gameLoop();
-  </script>
+gameLoop();
+</script>
 </body>
 </html>
