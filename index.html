@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cube Multiplayer Game</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="chatContainer">
+    <input type="text" id="chatInput" placeholder="Написать сообщение и нажать Enter" autocomplete="off" />
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const ws = new WebSocket(`ws://${location.host}`);
+
+    let playerId = null;
+    let players = {};
+
+    const mapSize = 20000;
+    const playerSize = 50;
+    const cornerRadius = 15;
+
+    // Управление
+    let keys = {};
+    window.addEventListener('keydown', (e) => {
+      keys[e.key.toLowerCase()] = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    // Для телефона: простой виртуальный джойстик
+    let touchX = null;
+    let touchY = null;
+    let moveX = 0;
+    let moveY = 0;
+
+    canvas.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      touchX = touch.clientX;
+      touchY = touch.clientY;
+    });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      moveX = touch.clientX - touchX;
+      moveY = touch.clientY - touchY;
+    }, { passive: false });
+    canvas.addEventListener('touchend', (e) => {
+      moveX = 0;
+      moveY = 0;
+      touchX = null;
+      touchY = null;
+    });
+
+    // Чат
+    const chatInput = document.getElementById('chatInput');
+
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+        const msg = chatInput.value.trim();
+        ws.send(JSON.stringify({ type: 'chat', msg }));
+        chatInput.value = '';
+      }
+    });
+
+    // Рисуем круглый квадрат
+    function roundRect(ctx, x, y, width, height, radius, fillStyle) {
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    let playerPos = { x: 10000, y: 10000 };
+
+    function updatePosition() {
+      const speed = 10;
+      let dx = 0;
+      let dy = 0;
+
+      // ПК управление
+      if (keys['w'] || keys['arrowup']) dy -= speed;
+      if (keys['s'] || keys['arrowdown']) dy += speed;
+      if (keys['a'] || keys['arrowleft']) dx -= speed;
+      if (keys['d'] || keys['arrowright']) dx += speed;
+
+      // Телефон управление (простое)
+      if (moveX !== 0 || moveY !== 0) {
+        const len = Math.sqrt(moveX * moveX + moveY * moveY);
+        if (len > 20) {
+          dx += (moveX / len) * speed;
+          dy += (moveY / len) * speed;
+        }
+      }
+
+      playerPos.x = Math.min(Math.max(0, playerPos.x + dx), mapSize);
+      playerPos.y = Math.min(Math.max(0, playerPos.y + dy), mapSize);
+    }
+
+    let lastSendTime = 0;
+
+    function gameLoop() {
+      updatePosition();
+
+      const now = Date.now();
+      if (playerId && now - lastSendTime > 40) { // ~25fps отправка на сервер
+        ws.send(JSON.stringify({ type: 'move', x: playerPos.x, y: playerPos.y }));
+        lastSendTime = now;
+      }
+
+      // Очистка экрана
+      ctx.fillStyle = '#222';
+      ctx.fillRect(0, 0, width, height);
+
+      // Камера следует за игроком
+      const camX = playerPos.x - width / 2;
+      const camY = playerPos.y - height / 2;
+
+      // Рисуем всех игроков
+      for (const id in players) {
+        const p = players[id];
+        const screenX = p.x - camX;
+        const screenY = p.y - camY;
+
+        // Рисуем игрока (закругленный квадрат)
+        roundRect(ctx, screenX - playerSize / 2, screenY - playerSize / 2, playerSize, playerSize, cornerRadius, id === playerId ? '#4caf50' : '#2196f3');
+
+        // Рисуем сообщение над головой, если есть и не прошло 2.5 секунды
+        if (p.msg && Date.now() - p.msgTime < 2500) {
+          ctx.font = '16px Arial';
+          ctx.fillStyle = 'white';
+          ctx.textAlign = 'center';
+          ctx.fillText(p.msg, screenX, screenY - playerSize / 2 - 10);
+        }
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'init') {
+        playerId = data.id;
+        players = data.players;
+      } else if (data.type === 'players') {
+        players = data.players;
+      }
+    };
+
+    gameLoop();
+  </script>
+</body>
+</html>
